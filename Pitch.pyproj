@@ -13,7 +13,7 @@
     <RootNamespace>Pitch</RootNamespace>
     <LaunchProvider>Standard Python launcher</LaunchProvider>
     <EnableNativeCodeDebugging>False</EnableNativeCodeDebugging>
-    <CommandLineArguments>-i assets\Violin-A.mp3 -n</CommandLineArguments>
+    <CommandLineArguments>-i assets\Violin-A.mp3 -n -p stft</CommandLineArguments>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
     <DebugSymbols>true</DebugSymbols>
@@ -28,6 +28,9 @@
       <SubType>Code</SubType>
     </Compile>
     <Compile Include="Pitch.py" />
+    <Compile Include="Signal.py">
+      <SubType>Code</SubType>
+    </Compile>
     <Compile Include="Transforms.py">
       <SubType>Code</SubType>
     </Compile>

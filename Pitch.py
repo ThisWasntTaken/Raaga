@@ -1,12 +1,15 @@
 import sys
 import os
 import argparse
-import MP3
 import numpy as np
 from bokeh.plotting import figure as bkfigure
 from bokeh.io import show as bkshow
 from bokeh.layouts import column as bkcolumn
+from bokeh.models.mappers import LinearColorMapper
+from bokeh.palettes import Inferno11
 import bokeh
+from Signal import AudioSignal
+import MP3
 import Transforms
 
 def main():
@@ -36,20 +39,26 @@ def main():
     fSignal = Transforms.STFT(inSignal)
 
     figures = []
+    # Plot the data for quick visualization
     if options.plot == 'input':
-        # Plot the data for quick visualization
-        time = np.arange(0, inSignal.time, inSignal.samplingPeriod, dtype=np.float32)
-
-        figures.append(bkfigure(plot_width = 1200, plot_height = 600, x_axis_label = 'Time'))
-        figures[0].line(time, inSignal.audioData[:,0])
-        for i in range(1, inSignal.channels):
-            figures.append(bkfigure(plot_width = 1200, plot_height = 600, x_axis_label = 'Time', x_range=figures[0].x_range))
-            figures[i].line(time, inSignal.audioData[:,i])
-    else:
-        time = np.arange(0, fSignal.time, inSignal.samplingPeriod, dtype=np.float32)
+        for i in range(0, inSignal.channels):
+            if i == 0:
+                figures.append(bkfigure(plot_width = 1200, plot_height = 600, x_axis_label = 'Time', y_axis_label = 'Amp'))
+            else:
+                figures.append(bkfigure(plot_width = 1200, plot_height = 600, x_axis_label = 'Time', y_axis_label = 'Amp', x_range=figures[0].x_range))
+            figures[i].line(inSignal.time, inSignal.audioData[:,i])
+    elif options.plot == 'stft':
+        for i in range(0, inSignal.channels):
+            if i == 0:
+                figures.append(bkfigure(plot_width = 1200, plot_height = 400, x_axis_label = 'Time', y_axis_label = 'Frequency'))
+            else:
+                figures.append(bkfigure(plot_width = 1200, plot_height = 400, x_axis_label = 'Time', y_axis_label = 'Frequency', x_range=figures[0].x_range, y_range=figures[0].y_range))
+            channelAmp = np.max(fSignal.audioData[:,:,i])
+            figures[-1].image(image=[fSignal.audioData[:,:,i]], x=0, y=0, dw=fSignal.time[-1], dh=fSignal.dimensionAxes[0][-1], color_mapper=LinearColorMapper(high=channelAmp, low=0, palette=Inferno11))
         pass
     
     bkshow(bkcolumn(*figures))
+    return 0
 
 if __name__ == "__main__":
     sys.exit(main())

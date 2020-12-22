@@ -1,59 +1,45 @@
 import numpy as np
+from math import ceil, floor
 from scipy.signal import stft
 from scipy.fft import dct
-from MP3 import AudioSignal
+from Signal import AudioSignal
 import matplotlib.pyplot as plt
 
-from python_speech_features import mfcc
+def STFT(x, samplingRate = 1.0, windowLength = 0.05, windowEvery = 0.01, window = 'hann'):
+    # Calculate everything in samples
+    windowLengthSamples = windowLength * x.samplingRate
+    windowEverySamples = windowEvery * x.samplingRate
 
-def STFT(x, samplingRate = 1.0, wlength = 2400, woverlap = 2272, window = 'hann'):
-    ylength = 1+int((x.length+woverlap-1)/woverlap)
-    y = np.ndarray(shape = (woverlap+1, ylength, x.channels), dtype=np.float32)
+    # Length of y is going to be the number of windows in the stream
+    # We pad the input signal to complete integral number of windows
+    # Hence ceil of the division below
+    ylength = 1 + ceil(x.length/windowEverySamples)
+
+    # Width of y is half of the window length - nyquist frequency
+    # is at the midpoing of the window length. +1 for the midpoint
+    # of symmetry
+    ywidth = 1 + floor(windowLengthSamples/2)
+
+    y = np.ndarray(shape = (ywidth, ylength, x.channels), dtype=np.float32)
+
     for i in range(0, x.channels):
-        #t, f, y[:, :,i] = stft(
         f, t, Zxx = stft(
             x.audioData[:,i], 
             fs=samplingRate, 
             window=window, 
-            nperseg=wlength, 
-            noverlap=woverlap, 
+            nperseg=windowLengthSamples, 
+            noverlap=windowLengthSamples-windowEverySamples, 
             nfft=None, 
             detrend=False, 
             return_onesided=True, 
             boundary='zeros', 
             padded=True, 
             axis=-1)
-        #plt.pcolormesh(f, t, np.abs(Zxx), vmin=0, vmax=1.0, shading='gouraud')
-
-        winstep = 0.01
-        mfcc_feat = mfcc(x.audioData[:,i],x.samplingRate, winstep=winstep)
-        t = np.arange(0, x.length - x.samplingRate*winstep - 1, x.samplingRate*winstep)
-        f = np.arange(0, 13, 1)
-        
-        #plt.pcolormesh(t, f*x.samplingRate, np.abs(Zxx))
-        #plt.pcolormesh(t, f*x.samplingRate, np.abs(mfcc_feat))
-        #plt.pcolormesh(t, f, np.abs(np.transpose(mfcc_feat)))
-        for j in range(0,13):
-            plt.scatter(t,mfcc_feat[:,j])
-            plt.title('STFT Magnitude')
-            plt.ylabel('Frequency [Hz]')
-            plt.xlabel('Time [sec]')
-            plt.show()
-
-        a = 0
-
-    return AudioSignal(y, x.samplingRate, ylength, x.channels)
-
-def DCT(x, samplingRate = 1.0, wlength = 256, woverlap = 128):
-    return dct(
-        x.audioData[:,0], 
-        fs=samplingRate, 
-        window='hann', 
-        nperseg=wlength, 
-        noverlap=woverlap, 
-        nfft=None, 
-        detrend=False, 
-        return_onesided=True, 
-        boundary='zeros', 
-        padded=True, 
-        axis=0)
+        y[:, :,i] = np.abs(Zxx)
+    
+    # Construct an audio signal which is 2 dimensional to represent the 
+    # frequency in the second dimension
+    ySignal = AudioSignal(y, 1/windowEvery, ylength, x.channels, 2)
+    ySignal.dimensionAxes.append(f * x.samplingRate)
+    ySignal.time = t*x.samplingPeriod
+    return ySignal

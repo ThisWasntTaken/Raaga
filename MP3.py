@@ -2,15 +2,7 @@ import os
 import pathlib
 import numpy as np
 import pydub
-
-class AudioSignal:
-    def __init__(self, audioData = np.float32([]), samplingRate = 0, length = 0, channels = 1):
-        self.audioData = audioData
-        self.samplingRate = samplingRate
-        self.samplingPeriod = 1/samplingRate
-        self.channels = channels
-        self.length = length
-        self.time = length/samplingRate
+from Signal import AudioSignal
 
 def read(f, normalized = False):
     # Read MP3 to numpy array
@@ -24,6 +16,6 @@ def read(f, normalized = False):
         audioData = audioData.reshape((-1,2)) # Unknown length - so resize as required for 2 columns
 
     if normalized:
-        return AudioSignal(np.float32(audioData) / 2**15, audioSegment.frame_rate, audioData.shape[0], audioData.shape[1])
+        return AudioSignal(np.float32(audioData) / 2**15, audioSegment.frame_rate, audioData.shape[0], audioData.shape[1], 1)
     else:
-        return AudioSignal(np.float32(audioData), audioSegment.frame_rate, audioData.shape[0], audioData.shape[1])
+        return AudioSignal(np.float32(audioData), audioSegment.frame_rate, audioData.shape[0], audioData.shape[1], 1)
