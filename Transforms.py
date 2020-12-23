@@ -8,7 +8,8 @@ import matplotlib.pyplot as plt
 def STFT(x, samplingRate = 1.0, windowLength = 0.05, windowEvery = 0.01, window = 'hann'):
     # Calculate everything in samples
     windowLengthSamples = windowLength * x.samplingRate
-    windowEverySamples = windowEvery * x.samplingRate
+    windowEverySamples = ceil(windowEvery * x.samplingRate)
+    adjustedWindowEvery = windowEverySamples / x.samplingRate
 
     # Length of y is going to be the number of windows in the stream
     # We pad the input signal to complete integral number of windows
@@ -39,7 +40,7 @@ def STFT(x, samplingRate = 1.0, windowLength = 0.05, windowEvery = 0.01, window 
     
     # Construct an audio signal which is 2 dimensional to represent the 
     # frequency in the second dimension
-    ySignal = AudioSignal(y, 1/windowEvery, ylength, x.channels, 2)
+    ySignal = AudioSignal(y, 1/adjustedWindowEvery, ylength, x.channels, 2)
     ySignal.dimensionAxes.append(f * x.samplingRate)
     ySignal.time = t*x.samplingPeriod
     return ySignal
