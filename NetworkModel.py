@@ -56,13 +56,12 @@ class NSynthDataSet(Dataset):
 
     WavFileTime = 4.0
     SamplingFrequency = 16000
-    WindowStep = 4000
     WindowLength = (ModelBase.InputShape[0] - 1) * 2
     FrequencyBinsCount = ModelBase.InputShape[0]
     Sigma = 2.0 # sqrt(2)*sigma
 
 
-    def __init__(self, root_dir, transform = passthru, filterString = '', model = Model1):
+    def __init__(self, root_dir, transform = passthru, filterString = '', model = Model1, windowStep = 4000):
         with open(os.path.join(root_dir, 'examples.json'), 'r') as f:
             self.labelMap = json.loads(f.read())
             if filterString:
@@ -71,17 +70,18 @@ class NSynthDataSet(Dataset):
                 self.labelMap = { i : 440.0 * (2.0 ** ((self.labelMap[i]['pitch'] - 69)/12)) for i in self.labelMap }
         self.labelVector = list(self.labelMap.keys())
         self.frequencyValues = { i : None for i in self.labelMap.values() }
+        self.windowStep = windowStep
         self.outputBinsCount = ModelBase.InputShape[0] // model.InputToOutputRatio
         for f in self.frequencyValues:
             self.frequencyValues[f] = np.linspace(0, NSynthDataSet.SamplingFrequency/2, self.outputBinsCount)
             self.frequencyValues[f] = np.exp(-((self.frequencyValues[f]-f)**2 / (NSynthDataSet.Sigma**2)))
 
-        self.windowsPerWav = int(NSynthDataSet.WavFileTime * NSynthDataSet.SamplingFrequency // NSynthDataSet.WindowStep)
+        self.windowsPerWav = int(NSynthDataSet.WavFileTime * NSynthDataSet.SamplingFrequency // self.windowStep)
         self.root_dir = root_dir
         self.transform = transform
 
     def __len__(self):
-        return len(self.labelMap) * ceil(NSynthDataSet.WavFileTime * NSynthDataSet.SamplingFrequency / NSynthDataSet.WindowStep)
+        return len(self.labelMap) * ceil(NSynthDataSet.WavFileTime * NSynthDataSet.SamplingFrequency / self.windowStep)
 
     def __getitem__(self, idx):
         wav_file_name = os.path.join(self.root_dir, 'audio', self.labelVector[idx[0] // self.windowsPerWav] + '.wav')
@@ -94,7 +94,7 @@ class NSynthDataSet(Dataset):
             fs=NSynthDataSet.SamplingFrequency, 
             window='hann', 
             nperseg=NSynthDataSet.WindowLength, 
-            noverlap=NSynthDataSet.WindowLength-NSynthDataSet.WindowStep, 
+            noverlap=NSynthDataSet.WindowLength-self.windowStep, 
             nfft=None, 
             detrend=False, 
             return_onesided=True, 
@@ -128,7 +128,7 @@ class WavRandomSampler(Sampler):
     def __iter__(self):
         return iter(self.sequence)
         
-def train(root_dir = 'assets\\nsynth_test', model_class = Model1, epochs = 20, learning_rate = 1e-3, device = torch.device('cpu'), save_path = 'model.pth'):
+def train(root_dir = 'assets\\nsynth_test', model_class = Model1, epochs = 20, learning_rate = 1e-3, device = torch.device('cpu'), save_path = 'model.pth', windowStep = 4000):
     # Plotter object to plot the losses
     plotter = VisdomLinePlotter(env_name='Loss plot')
 
@@ -137,7 +137,7 @@ def train(root_dir = 'assets\\nsynth_test', model_class = Model1, epochs = 20, l
 
     # Initialize the optimizer and data set first
     optimizer = Adam(model.parameters(), lr = learning_rate)
-    data_set = NSynthDataSet(root_dir = root_dir)
+    data_set = NSynthDataSet(root_dir = root_dir, windowStep = windowStep)
 
     # Epoch loop
     #for _ in tqdm.tqdm(range(1, epochs + 1)):

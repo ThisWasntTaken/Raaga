@@ -15,6 +15,7 @@ def main():
     parser.add_argument('-r', dest='learningRate', type=float, help='Set the learning rate', default='0.001')
     parser.add_argument('-e', dest='epochs', type=int, help='Set the epochs', default='20')
     parser.add_argument('-g', dest='gpu', action='store_true', help='Set the training to run on gpu')
+    parser.add_argument('-w', dest='windowStep', type=int, help='Set the window step to use when performing stft', default='4000')
     parser.add_argument('-o', dest='output', type=str, help='Set the output path', default='model.pth')
 
     options = parser.parse_args()
@@ -41,7 +42,8 @@ def main():
         epochs = options.epochs, 
         learning_rate = options.learningRate, 
         device = device, 
-        save_path = options.output
+        save_path = options.output,
+        windowStep = options.windowStep
     )
     
     return 0
