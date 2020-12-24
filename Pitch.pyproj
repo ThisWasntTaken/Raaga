@@ -27,8 +27,12 @@
     <Compile Include="MP3.py">
       <SubType>Code</SubType>
     </Compile>
+    <Compile Include="NetworkModel.py" />
     <Compile Include="Pitch.py" />
     <Compile Include="Signal.py">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="Train.py">
       <SubType>Code</SubType>
     </Compile>
     <Compile Include="Transforms.py">
