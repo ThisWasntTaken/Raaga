@@ -13,7 +13,7 @@
     <RootNamespace>Pitch</RootNamespace>
     <LaunchProvider>Standard Python launcher</LaunchProvider>
     <EnableNativeCodeDebugging>False</EnableNativeCodeDebugging>
-    <CommandLineArguments>-i assets\Violin-A.mp3 -n -p stft</CommandLineArguments>
+    <CommandLineArguments>-i assets\samples\Violin-A.mp3 -n -t stft</CommandLineArguments>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
     <DebugSymbols>true</DebugSymbols>
