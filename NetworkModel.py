@@ -1,13 +1,17 @@
 # All DNN models and training functions here
 
+import torch
 from torch.nn import Conv1d, MaxPool1d, Softmax, Module, Linear
 from torch.utils.data import Dataset, BatchSampler, Sampler, DataLoader
+from torch.optim import SGD, Adam
 from math import ceil
 from scipy.io import wavfile
 from scipy.signal import stft
 import numpy as np
 import random
 import json
+import tqdm
+import os
 
 
 class ModelBase(Module):
@@ -18,7 +22,7 @@ class Model1(ModelBase):
     ConvolutionPadding = 2
     PoolingKernelSize = 2
     def __init__(self):
-        super(Model, self).__init__()
+        super(Model1, self).__init__()
         self.conv1 = Conv1d(in_channels = ModelBase.InputShape[0], out_channels = ModelBase.InputShape[1], kernel_size = Model1.ConvolutionKernelSize, padding = Model1.ConvolutionPadding)
         self.maxpool1 = MaxPool1d(Model1.PoolingKernelSize)
         self.fcInputShape = (ModelBase.InputShape[0] / Model1.PoolingKernelSize,  Model1.InputShape[1])
@@ -49,7 +53,7 @@ class NSynthDataSet(Dataset):
     OutputBinsCount = ModelBase.InputShape[0] // 2
     Sigma = 2.0 # sqrt(2)*sigma
 
-    def __init__(self, root_dir, transform = None, filterString = ''):
+    def __init__(self, root_dir, transform = lambda x : x, filterString = ''):
         with open(os.path.join(root_dir, 'examples.json'), 'r') as f:
             self.labelMap = json.loads(f.read())
             if filterString:
@@ -99,10 +103,10 @@ class WavRandomSampler(Sampler):
         self.groupRange = (self.indexRange[0], int(self.indexRange[1] / self.groupSize))
         #print ("SAMPLER INPUTS :",self.indexRange, self.groupSize, self.groupRange)
         self.sequence = []
-        for i in range(self.groupRange[0], self.groupRange[1]):
+        for _ in range(self.groupRange[0], self.groupRange[1]):
             # Choose a group
             group = random.randint(self.groupRange[0], self.groupRange[1]-1)
-            for j in range(0, self.groupSize):
+            for __ in range(0, self.groupSize):
                 # Choose indices in the group
                 indexInGroup = random.randint(0, self.groupSize-1)
                 self.sequence.append(group*self.groupSize + indexInGroup)
@@ -113,3 +117,31 @@ class WavRandomSampler(Sampler):
     def __iter__(self):
         return iter(self.sequence)
         
+def train(root_dir = 'assets\\nsynth_test', model_class = Model1, epochs = 20, learning_rate = 1e-3, device = torch.device('cpu'), save_path = 'model.pth'):
+    model = model_class().to(device)
+    optimizer = Adam(model.parameters(), lr = learning_rate)
+    data_set = NSynthDataSet(root_dir = root_dir)
+
+    for _ in tqdm.tqdm(range(1, epochs + 1)):
+        data_loader = DataLoader(
+            data_set,
+            shuffle = False,
+            num_workers = 1,
+            batch_sampler = BatchSampler(
+                WavRandomSampler((0, len(data_set)),data_set.windowsPerWav),
+                batch_size = data_set.windowsPerWav,
+                drop_last = False
+            )
+        )
+
+        for batch_idx, batch in enumerate(data_loader):
+            inputs, labels = batch
+            inputs = inputs.to(device)
+            labels = labels.to(device)
+            optimizer.zero_grad()
+            outputs = model.forward(inputs)
+            loss = (outputs - labels).pow(2).mean().sqrt()
+            loss.backward()
+            optimizer.step()
+    
+    torch.save(model.state_dict(), save_path)
