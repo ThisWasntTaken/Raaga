@@ -28,7 +28,7 @@ def main():
         return 2
 
     if options.gpu:
-        device = torch.cuda.device('cuda')
+        device = torch.device(0)
     else:
         device = torch.device('cpu')
 

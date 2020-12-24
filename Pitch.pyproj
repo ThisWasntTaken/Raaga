@@ -4,7 +4,7 @@
     <SchemaVersion>2.0</SchemaVersion>
     <ProjectGuid>07a6705a-27be-4d4c-b93c-1be04e46ac59</ProjectGuid>
     <ProjectHome>.</ProjectHome>
-    <StartupFile>Pitch.py</StartupFile>
+    <StartupFile>Train.py</StartupFile>
     <SearchPath>
     </SearchPath>
     <WorkingDirectory>.</WorkingDirectory>
@@ -13,7 +13,7 @@
     <RootNamespace>Pitch</RootNamespace>
     <LaunchProvider>Standard Python launcher</LaunchProvider>
     <EnableNativeCodeDebugging>False</EnableNativeCodeDebugging>
-    <CommandLineArguments>-i assets\samples\Violin-A.mp3 -n -t stft</CommandLineArguments>
+    <CommandLineArguments>-i .\assets\nsynth_test\</CommandLineArguments>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
     <DebugSymbols>true</DebugSymbols>
@@ -29,6 +29,9 @@
     </Compile>
     <Compile Include="NetworkModel.py" />
     <Compile Include="Pitch.py" />
+    <Compile Include="PlotterUtils.py">
+      <SubType>Code</SubType>
+    </Compile>
     <Compile Include="Signal.py">
       <SubType>Code</SubType>
     </Compile>
