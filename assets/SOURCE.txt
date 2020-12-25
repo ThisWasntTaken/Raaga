@@ -1,1 +1,2 @@
-www.fesliyanstudios.com
+Samples : www.fesliyanstudios.com
+nSynth  : https://magenta.tensorflow.org/datasets/nsynth

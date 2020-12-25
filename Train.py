@@ -12,6 +12,7 @@ def main():
     parser = argparse.ArgumentParser(description='Train on a given dataset to recognize pitch')
     parser.add_argument('-i', dest='inputModel', type=str, help='Input data set file path', default='')
     parser.add_argument('-m', dest='modelType', type=str, help='Set the model type', default='Model1')
+    parser.add_argument('-R', dest='loadDataToRam', action='store_true', help='Preload all data into ram to speedup training')
     parser.add_argument('-r', dest='learningRate', type=float, help='Set the learning rate', default='0.001')
     parser.add_argument('-e', dest='epochs', type=int, help='Set the epochs', default='20')
     parser.add_argument('-g', dest='gpu', action='store_true', help='Set the training to run on gpu')
@@ -29,16 +30,24 @@ def main():
         return 2
 
     if options.gpu:
-        device = torch.device(0)
+        device = torch.device('cuda')
+        print ("Using device", torch.cuda.get_device_name(0))
     else:
         device = torch.device('cpu')
+        print ("Using device CPU")
 
     if options.modelType == 'Model1':
         modelClass = NetworkModel.Model1
 
+    if options.loadDataToRam:
+        datasetClass = NetworkModel.NSynthRamLoadedDataSet
+    else:
+        datasetClass = NetworkModel.NSynthDataSet
+
     NetworkModel.train(
         root_dir = 'assets\\nsynth_test', 
         model_class = modelClass, 
+        dataset_class = datasetClass,
         epochs = options.epochs, 
         learning_rate = options.learningRate, 
         device = device, 
