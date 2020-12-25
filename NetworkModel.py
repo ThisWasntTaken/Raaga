@@ -167,21 +167,20 @@ class NSynthRamLoadedDataSet(Dataset):
         return self.inputs[idx, :, :], self.frequencyValues[self.labelMap[self.labelVector[idx[0] // self.windowsPerWav]]]
 
 class WavRandomSampler(Sampler):
-    def __init__(self, indexRange, groupSize):
-        self.indexRange = indexRange
+    def __init__(self, groupSize, groupIndices):
+        self.countGroups = len(groupIndices)
         self.groupSize = groupSize
-        self.groupRange = (self.indexRange[0], int(self.indexRange[1] / self.groupSize))
         #print ("SAMPLER INPUTS :",self.indexRange, self.groupSize, self.groupRange)
         self.sequence = []
-        groups = random.sample(range(self.groupRange[0], self.groupRange[1]), self.groupRange[1]-self.groupRange[0])
+        groups = np.random.choice(groupIndices, size=self.countGroups, replace=False)
         for g in groups:
             # Choose a group
-            indicesInGroup = random.sample(range(0, self.groupSize), self.groupSize)
+            indicesInGroup = np.random.choice(range(0, self.groupSize), size=self.groupSize, replace=False)
             for i in indicesInGroup :
                 # Choose indices in the group
                 self.sequence.append(g*self.groupSize + i)
     def __len__(self):
-        return self.indexRange[1] - self.indexRange[0]
+        return self.countGroups * self.groupSize
     def __iter__(self):
         return iter(self.sequence)
         
@@ -191,6 +190,7 @@ def train(
     dataset_class = NSynthDataSet,
     epochs = 20, 
     learning_rate = 1e-3, 
+    validation_split = 0.1,
     device = torch.device('cpu'), 
     save_path = 'model.pth', 
     windowStep = 4000):
@@ -200,40 +200,63 @@ def train(
 
     # Port the model to device
     model = model_class()
-    #model = model.to(device)
+    model = model.to(device)
 
     # Initialize the optimizer and data set first
     optimizer = Adam(model.parameters(), lr = learning_rate)
     data_set = dataset_class(root_dir = root_dir, windowStep = windowStep)
 
+    # Initialize the sampler to split between train and validation sets
+    allIndices = list(range(0, len(data_set) // data_set.windowsPerWav))
+    validationLen = int(np.floor(validation_split * len(allIndices)))
+    validationIndices = np.random.choice(allIndices, size=validationLen, replace=False)
+    trainIndices = list(set(allIndices) - set(validationIndices))
+
+    trainWavRandomSampler = WavRandomSampler(data_set.windowsPerWav, trainIndices)
+    validationWavRandomSampler = WavRandomSampler(data_set.windowsPerWav, validationIndices)
+    
+    # Data loader object to load wav files on demand
+    # And run STFT on the wave files to obtain the input features
+    trainDataLoader = DataLoader(
+        data_set,
+        shuffle = False,
+        num_workers = 1,
+        batch_size = None, # Specially needed - else the auto_collation makes batch sampling useless!
+        sampler = BatchSampler(
+            trainWavRandomSampler,
+            batch_size = data_set.windowsPerWav,
+            drop_last = False
+        )
+    )
+    validationDataLoader = DataLoader(
+        data_set,
+        shuffle = False,
+        num_workers = 1,
+        batch_size = None, # Specially needed - else the auto_collation makes batch sampling useless!
+        sampler = BatchSampler(
+            validationWavRandomSampler,
+            batch_size = data_set.windowsPerWav,
+            drop_last = False
+        )
+    )
+
     # Epoch loop
     #for _ in tqdm.tqdm(range(1, epochs + 1)):
     for epoch in range(1, epochs + 1):
         # Object to aggregate losses over the epoch
-        losses = AverageMeter()
+        trainLosses = AverageMeter()
+        validationLosses = AverageMeter()
 
-        # Data loader object to load wav files on demand
-        # And run STFT on the wave files to obtain the input features
-        data_loader = DataLoader(
-            data_set,
-            shuffle = False,
-            num_workers = 1,
-            batch_size = None, # Specially needed - else the auto_collation makes batch sampling useless!
-            sampler = BatchSampler(
-                WavRandomSampler((0, len(data_set)),data_set.windowsPerWav),
-                batch_size = data_set.windowsPerWav,
-                drop_last = False
-            )
-        )
 
-        # Iterate over the dataset
-        for batch_idx, batch in enumerate(data_loader):
+        # Iterate over the dataset from training
+        model.train(True)
+        for batch_idx, batch in enumerate(trainDataLoader):
             # Get the inputs from the dataset
             inputs, labels = batch
 
             # Port them to device
-            #inputs = inputs.to(device)
-            #labels = labels.to(device)
+            inputs = inputs.to(device)
+            labels = labels.to(device)
 
             # Zero the parameter gradients 
             optimizer.zero_grad()
@@ -241,12 +264,30 @@ def train(
             # forward + backward + optimize
             outputs = model.forward(inputs)
             loss = (outputs - labels).pow(2).mean().sqrt()
-            losses.update(loss.data.cpu().numpy(), labels.size(0))
+            trainLosses.update(loss.data.cpu().numpy(), labels.size(0))
             loss.backward()
             optimizer.step()
 
         # Update the Plot for the losses in this epoch
-        plotter.plot('loss', 'train', 'Class Loss', epoch, losses.avg)
-        print('Epoch', epoch, 'done : Loss =', losses.avg)
+        plotter.plot('loss', 'train', 'Class Loss', epoch, trainLosses.avg)
+        print('Epoch', epoch, ' : training DONE. TrainingLoss =', trainLosses.avg)
+
+        model.eval()
+        for batch_idx, batch in enumerate(validationDataLoader):
+            # Get the inputs from the dataset
+            inputs, labels = batch
+
+            # Port them to device
+            inputs = inputs.to(device)
+            labels = labels.to(device)
+
+            # forward + backward + optimize
+            outputs = model.forward(inputs)
+            loss = (outputs - labels).pow(2).mean().sqrt()
+            validationLosses.update(loss.data.cpu().numpy(), labels.size(0))
+
+        # Update the Plot for the losses in this epoch
+        plotter.plot('loss', 'validation', 'Class Loss', epoch, validationLosses.avg)
+        print('Epoch', epoch, ' : validation DONE. ValidationLoss =', validationLosses.avg)
     
     torch.save(model.state_dict(), save_path)
