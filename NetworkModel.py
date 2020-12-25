@@ -190,7 +190,7 @@ def train(
     dataset_class = NSynthDataSet,
     epochs = 20, 
     learning_rate = 1e-3, 
-    validation_split = 0.1,
+    validationSplit = 0.1,
     device = torch.device('cpu'), 
     save_path = 'model.pth', 
     windowStep = 4000):
@@ -208,7 +208,7 @@ def train(
 
     # Initialize the sampler to split between train and validation sets
     allIndices = list(range(0, len(data_set) // data_set.windowsPerWav))
-    validationLen = int(np.floor(validation_split * len(allIndices)))
+    validationLen = int(np.floor(validationSplit * len(allIndices)))
     validationIndices = np.random.choice(allIndices, size=validationLen, replace=False)
     trainIndices = list(set(allIndices) - set(validationIndices))
 

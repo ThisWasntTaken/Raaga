@@ -14,6 +14,7 @@ def main():
     parser.add_argument('-m', dest='modelType', type=str, help='Set the model type', default='Model1')
     parser.add_argument('-R', dest='loadDataToRam', action='store_true', help='Preload all data into ram to speedup training')
     parser.add_argument('-r', dest='learningRate', type=float, help='Set the learning rate', default='0.001')
+    parser.add_argument('-v', dest='validationSplit', type=float, help='Set the validation split', default='0.1')
     parser.add_argument('-e', dest='epochs', type=int, help='Set the epochs', default='20')
     parser.add_argument('-g', dest='gpu', action='store_true', help='Set the training to run on gpu')
     parser.add_argument('-w', dest='windowStep', type=int, help='Set the window step to use when performing stft', default='4000')
@@ -51,6 +52,7 @@ def main():
         epochs = options.epochs, 
         learning_rate = options.learningRate, 
         device = device, 
+        validationSplit = options.validationSplit,
         save_path = options.output,
         windowStep = options.windowStep
     )
