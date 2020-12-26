@@ -166,21 +166,99 @@ class NSynthRamLoadedDataSet(Dataset):
         idx = np.array(idx)
         return self.inputs[idx, :, :], self.frequencyValues[self.labelMap[self.labelVector[idx[0] // self.windowsPerWav]]]
 
+class NSynthChunkedDataSet(Dataset):
+    """NSynth Music Frequencies dataset - but data loaded onto RAM at demand in *chunks*"""
+
+    WavFileTime = 4.0
+    SamplingFrequency = 16000
+    WindowLength = (ModelBase.InputShape[0] - 1) * 2
+    FrequencyBinsCount = ModelBase.InputShape[0]
+    Sigma = 2.0 # sqrt(2)*sigma
+
+
+    def __init__(self, root_dir, chunkSize, transform = passthru, filterString = '', model = Model1, windowStep = 4000, device = torch.device('cpu')):
+        with open(os.path.join(root_dir, 'examples.json'), 'r') as f:
+            self.labelMap = json.loads(f.read())
+            if filterString:
+                self.labelMap = { i : 440.0 * (2.0 ** ((self.labelMap[i]['pitch'] - 69)/12)) for i in self.labelMap if filterString in i }
+            else:
+                self.labelMap = { i : 440.0 * (2.0 ** ((self.labelMap[i]['pitch'] - 69)/12)) for i in self.labelMap }
+        self.chunkSize = chunkSize
+        self.labelVector = list(self.labelMap.keys())
+        self.frequencyValues = { i : None for i in self.labelMap.values() }
+        self.windowStep = windowStep
+        self.outputBinsCount = ModelBase.InputShape[0] // model.InputToOutputRatio
+
+        self.frequencyValues = np.ndarray(shape=(len(self.labelVector), self.outputBinsCount), dtype=np.float32)
+        for labelIdx in range(len(self.labelVector)):
+            self.frequencyValues[labelIdx,:] = np.linspace(0, NSynthDataSet.SamplingFrequency/2, self.outputBinsCount)
+            self.frequencyValues[labelIdx,:] = np.exp(-((self.frequencyValues[labelIdx,:]-self.labelMap[self.labelVector[labelIdx]])**2 / (NSynthDataSet.Sigma**2)))
+
+        self.windowsPerWav = int(NSynthDataSet.WavFileTime * NSynthDataSet.SamplingFrequency // self.windowStep)
+        self.root_dir = root_dir
+        self.transform = transform
+        self.wavFilePerChunk = self.chunkSize // self.windowsPerWav
+        self.windowsTotal = int(len(self.labelVector) * self.windowsPerWav)
+        self.currentlyAvailableChunkIdx = -1 # INVALID
+        self.inputs = np.ndarray(shape=(min(self.chunkSize, self.windowsTotal), 1, NSynthDataSet.FrequencyBinsCount), dtype=np.float32)
+
+    def __len__(self):
+        return len(self.labelMap) * ceil(NSynthDataSet.WavFileTime * NSynthDataSet.SamplingFrequency / self.windowStep)
+
+    def __getitem__(self, idx):
+        self.loadChunk(idx[0])
+        idx = np.array(idx)
+        labelIdx = idx // self.windowsPerWav
+        return self.inputs[idx % self.chunkSize, :, :], self.frequencyValues[labelIdx,:]
+
+    def loadChunk(self, startIdx):
+        chunkIdx = startIdx // self.chunkSize
+        if chunkIdx == self.currentlyAvailableChunkIdx: return
+        
+        self.currentlyAvailableChunkIdx = chunkIdx
+        print ("Loading wav files : ", chunkIdx * self.wavFilePerChunk, ":", chunkIdx * self.wavFilePerChunk + self.wavFilePerChunk)
+
+        for wavFileIdx in tqdm.tqdm(range(chunkIdx * self.wavFilePerChunk, min(chunkIdx * self.wavFilePerChunk + self.wavFilePerChunk, len(self.labelVector)))):
+            wavFilePath = os.path.join(self.root_dir, 'audio', self.labelVector[wavFileIdx] + '.wav')
+            _, data = wavfile.read(wavFilePath)
+            _, __, Zxx = stft(
+                data, 
+                fs=NSynthDataSet.SamplingFrequency, 
+                window='hann', 
+                nperseg=NSynthDataSet.WindowLength, 
+                noverlap=NSynthDataSet.WindowLength-self.windowStep, 
+                nfft=None, 
+                detrend=False, 
+                return_onesided=True, 
+                boundary='zeros', 
+                padded=True, 
+                axis=-1
+            )
+            wavFileWindowStart = int((wavFileIdx % self.wavFilePerChunk)*self.windowsPerWav)
+            wavFileWindowEnd = wavFileWindowStart + self.windowsPerWav
+            #print ("DONE with", wavFileIdx, wavFileWindowStart, wavFileWindowEnd)
+            self.inputs[wavFileWindowStart:wavFileWindowEnd,0,:] = self.transform(abs(Zxx[:,0:self.windowsPerWav]).transpose())
+
 class WavRandomSampler(Sampler):
-    def __init__(self, groupSize, groupIndices):
-        self.countGroups = len(groupIndices)
-        self.groupSize = groupSize
+    def __init__(self, chunkSize, chunkIndices, lastChunkIndex, lastChunkSize):
+        self.countGroups = len(chunkIndices)
+        if lastChunkIndex in chunkIndices:
+            self.fullSize = chunkSize * (self.countGroups - 1) + lastChunkSize
+        else:
+            self.fullSize = chunkSize * self.countGroups
         #print ("SAMPLER INPUTS :",self.indexRange, self.groupSize, self.groupRange)
         self.sequence = []
-        groups = np.random.choice(groupIndices, size=self.countGroups, replace=False)
+        groups = np.random.choice(chunkIndices, size=self.countGroups, replace=False)
         for g in groups:
             # Choose a group
-            indicesInGroup = np.random.choice(range(0, self.groupSize), size=self.groupSize, replace=False)
+            actualChunkSize = chunkSize
+            if lastChunkIndex in chunkIndices : actualChunkSize = lastChunkSize
+            indicesInGroup = np.random.choice(range(0, actualChunkSize), size=actualChunkSize, replace=False)
             for i in indicesInGroup :
                 # Choose indices in the group
-                self.sequence.append(g*self.groupSize + i)
+                self.sequence.append(g*chunkSize + i)
     def __len__(self):
-        return self.countGroups * self.groupSize
+        return self.fullSize
     def __iter__(self):
         return iter(self.sequence)
         
@@ -190,10 +268,56 @@ def train(
     dataset_class = NSynthDataSet,
     epochs = 20, 
     learning_rate = 1e-3, 
+    batchSize = 16,
+    memoryLimitInMB = 1024,
     validationSplit = 0.1,
     device = torch.device('cpu'), 
     save_path = 'model.pth', 
     windowStep = 4000):
+
+    # Calculate chunk size based on the memory limit allowed
+    windowsPerWav = int(NSynthDataSet.WavFileTime * NSynthDataSet.SamplingFrequency // windowStep)
+
+    if dataset_class == NSynthChunkedDataSet:
+        chunkSize = ceil(int(memoryLimitInMB * 1024 * 1024 / NSynthRamLoadedDataSet.FrequencyBinsCount / 4) / windowsPerWav) * windowsPerWav
+        data_set = NSynthChunkedDataSet(root_dir = root_dir, chunkSize = chunkSize, windowStep = windowStep)
+    else:
+        data_set = dataset_class(root_dir = root_dir, windowStep = windowStep)
+
+    # Initialize the sampler to split between train and validation sets
+    allChunkIndices = list(range(0, ceil(len(data_set) / chunkSize)))
+    lastChunkSize = len(data_set) % chunkSize
+    validationChunkLen = int(np.ceil(validationSplit * len(allChunkIndices)))
+    validationChunkIndices = np.random.choice(allChunkIndices, size=validationChunkLen, replace=False)
+    trainChunkIndices = list(set(allChunkIndices) - set(validationChunkIndices))
+
+    trainWavRandomSampler = WavRandomSampler(chunkSize, trainChunkIndices, allChunkIndices[-1], lastChunkSize)
+    validationWavRandomSampler = WavRandomSampler(chunkSize, validationChunkIndices, allChunkIndices[-1], lastChunkSize)
+    
+    # Data loader object to load wav files on demand
+    # And run STFT on the wave files to obtain the input features
+    trainDataLoader = DataLoader(
+        data_set,
+        shuffle = False,
+        num_workers = 0,
+        batch_size = None, # Specially needed - else the auto_collation makes batch sampling useless!
+        sampler = BatchSampler(
+            trainWavRandomSampler,
+            batch_size = batchSize,
+            drop_last = False
+        )
+    )
+    validationDataLoader = DataLoader(
+        data_set,
+        shuffle = False,
+        num_workers = 0,
+        batch_size = None, # Specially needed - else the auto_collation makes batch sampling useless!
+        sampler = BatchSampler(
+            validationWavRandomSampler,
+            batch_size = batchSize,
+            drop_last = False
+        )
+    )
 
     # Plotter object to plot the losses
     plotter = VisdomLinePlotter(env_name='Loss plot')
@@ -204,42 +328,7 @@ def train(
 
     # Initialize the optimizer and data set first
     optimizer = Adam(model.parameters(), lr = learning_rate)
-    data_set = dataset_class(root_dir = root_dir, windowStep = windowStep)
-
-    # Initialize the sampler to split between train and validation sets
-    allIndices = list(range(0, len(data_set) // data_set.windowsPerWav))
-    validationLen = int(np.floor(validationSplit * len(allIndices)))
-    validationIndices = np.random.choice(allIndices, size=validationLen, replace=False)
-    trainIndices = list(set(allIndices) - set(validationIndices))
-
-    trainWavRandomSampler = WavRandomSampler(data_set.windowsPerWav, trainIndices)
-    validationWavRandomSampler = WavRandomSampler(data_set.windowsPerWav, validationIndices)
     
-    # Data loader object to load wav files on demand
-    # And run STFT on the wave files to obtain the input features
-    trainDataLoader = DataLoader(
-        data_set,
-        shuffle = False,
-        num_workers = 1,
-        batch_size = None, # Specially needed - else the auto_collation makes batch sampling useless!
-        sampler = BatchSampler(
-            trainWavRandomSampler,
-            batch_size = data_set.windowsPerWav,
-            drop_last = False
-        )
-    )
-    validationDataLoader = DataLoader(
-        data_set,
-        shuffle = False,
-        num_workers = 1,
-        batch_size = None, # Specially needed - else the auto_collation makes batch sampling useless!
-        sampler = BatchSampler(
-            validationWavRandomSampler,
-            batch_size = data_set.windowsPerWav,
-            drop_last = False
-        )
-    )
-
     # Epoch loop
     #for _ in tqdm.tqdm(range(1, epochs + 1)):
     for epoch in range(1, epochs + 1):
@@ -281,7 +370,7 @@ def train(
             inputs = inputs.to(device)
             labels = labels.to(device)
 
-            # forward + backward + optimize
+            # forward
             outputs = model.forward(inputs)
             loss = (outputs - labels).pow(2).mean().sqrt()
             validationLosses.update(loss.data.cpu().numpy(), labels.size(0))

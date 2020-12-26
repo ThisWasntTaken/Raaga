@@ -13,7 +13,7 @@
     <RootNamespace>Pitch</RootNamespace>
     <LaunchProvider>Standard Python launcher</LaunchProvider>
     <EnableNativeCodeDebugging>False</EnableNativeCodeDebugging>
-    <CommandLineArguments>-i .\assets\nsynth_test\</CommandLineArguments>
+    <CommandLineArguments>-i .\assets\nsynth_valid\  -g -M 2500 -C -w 800 -r 0.0001</CommandLineArguments>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
     <DebugSymbols>true</DebugSymbols>
