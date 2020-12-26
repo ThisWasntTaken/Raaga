@@ -5,6 +5,7 @@ import torch
 from torch.nn import Conv1d, MaxPool1d, Softmax, Module, Linear
 from torch.utils.data import Dataset, BatchSampler, Sampler, DataLoader
 from torch.optim import SGD, Adam
+from torch.fft import fft
 
 # Signal processing imports
 from scipy.io import wavfile
@@ -43,6 +44,7 @@ class Model1(ModelBase):
         torch.nn.init.xavier_uniform_(self.fc2.weight)
 
     def forward(self, x):
+        x = fft(x,dim=2,norm='forward').abs()[:,:,0:ModelBase.InputShape[0]]
         x = torch.relu(self.conv1(x))
         x = self.maxpool1(x)
         x = x.view(-1, self.fcInputShape[0] *  self.fcInputShape[1])
@@ -188,19 +190,21 @@ class NSynthChunkedDataSet(Dataset):
         self.frequencyValues = { i : None for i in self.labelMap.values() }
         self.windowStep = windowStep
         self.outputBinsCount = ModelBase.InputShape[0] // model.InputToOutputRatio
+        self.device = device
 
         self.frequencyValues = np.ndarray(shape=(len(self.labelVector), self.outputBinsCount), dtype=np.float32)
         for labelIdx in range(len(self.labelVector)):
             self.frequencyValues[labelIdx,:] = np.linspace(0, NSynthDataSet.SamplingFrequency/2, self.outputBinsCount)
             self.frequencyValues[labelIdx,:] = np.exp(-((self.frequencyValues[labelIdx,:]-self.labelMap[self.labelVector[labelIdx]])**2 / (NSynthDataSet.Sigma**2)))
+        self.frequencyValues = torch.from_numpy(self.frequencyValues).to(self.device)
 
         self.windowsPerWav = int(NSynthDataSet.WavFileTime * NSynthDataSet.SamplingFrequency // self.windowStep)
+        self.signalLength = (self.windowsPerWav * self.windowStep) + NSynthDataSet.WindowLength
         self.root_dir = root_dir
         self.transform = transform
         self.wavFilePerChunk = self.chunkSize // self.windowsPerWav
         self.windowsTotal = int(len(self.labelVector) * self.windowsPerWav)
         self.currentlyAvailableChunkIdx = -1 # INVALID
-        self.inputs = np.ndarray(shape=(min(self.chunkSize, self.windowsTotal), 1, NSynthDataSet.FrequencyBinsCount), dtype=np.float32)
 
     def __len__(self):
         return len(self.labelMap) * ceil(NSynthDataSet.WavFileTime * NSynthDataSet.SamplingFrequency / self.windowStep)
@@ -209,35 +213,25 @@ class NSynthChunkedDataSet(Dataset):
         self.loadChunk(idx[0])
         idx = np.array(idx)
         labelIdx = idx // self.windowsPerWav
-        return self.inputs[idx % self.chunkSize, :, :], self.frequencyValues[labelIdx,:]
+        wavIdx = labelIdx % self.wavFilePerChunk
+        offset = (idx % self.windowsPerWav) * self.windowStep
+        return torch.stack([ self.inputs[j, :, i:i+NSynthDataSet.WindowLength] for i,j in zip(offset, wavIdx) ]), self.frequencyValues[labelIdx,:]
 
     def loadChunk(self, startIdx):
         chunkIdx = startIdx // self.chunkSize
         if chunkIdx == self.currentlyAvailableChunkIdx: return
         
         self.currentlyAvailableChunkIdx = chunkIdx
+        # Clean up old inputs
+        self.inputs = None
+        self.inputs = np.zeros(shape=(self.wavFilePerChunk, 1, self.signalLength), dtype=np.float32)
         print ("Loading wav files : ", chunkIdx * self.wavFilePerChunk, ":", chunkIdx * self.wavFilePerChunk + self.wavFilePerChunk)
 
-        for wavFileIdx in tqdm.tqdm(range(chunkIdx * self.wavFilePerChunk, min(chunkIdx * self.wavFilePerChunk + self.wavFilePerChunk, len(self.labelVector)))):
+        for wavFileIdx in range(chunkIdx * self.wavFilePerChunk, min(chunkIdx * self.wavFilePerChunk + self.wavFilePerChunk, len(self.labelVector))):
             wavFilePath = os.path.join(self.root_dir, 'audio', self.labelVector[wavFileIdx] + '.wav')
             _, data = wavfile.read(wavFilePath)
-            _, __, Zxx = stft(
-                data, 
-                fs=NSynthDataSet.SamplingFrequency, 
-                window='hann', 
-                nperseg=NSynthDataSet.WindowLength, 
-                noverlap=NSynthDataSet.WindowLength-self.windowStep, 
-                nfft=None, 
-                detrend=False, 
-                return_onesided=True, 
-                boundary='zeros', 
-                padded=True, 
-                axis=-1
-            )
-            wavFileWindowStart = int((wavFileIdx % self.wavFilePerChunk)*self.windowsPerWav)
-            wavFileWindowEnd = wavFileWindowStart + self.windowsPerWav
-            #print ("DONE with", wavFileIdx, wavFileWindowStart, wavFileWindowEnd)
-            self.inputs[wavFileWindowStart:wavFileWindowEnd,0,:] = self.transform(abs(Zxx[:,0:self.windowsPerWav]).transpose())
+            self.inputs[wavFileIdx % self.wavFilePerChunk, 0, 0:len(data)] = data
+        self.inputs = torch.from_numpy(self.inputs).to(self.device)
 
 class WavRandomSampler(Sampler):
     def __init__(self, chunkSize, chunkIndices, lastChunkIndex, lastChunkSize):
@@ -246,7 +240,6 @@ class WavRandomSampler(Sampler):
             self.fullSize = chunkSize * (self.countGroups - 1) + lastChunkSize
         else:
             self.fullSize = chunkSize * self.countGroups
-        #print ("SAMPLER INPUTS :",self.indexRange, self.groupSize, self.groupRange)
         self.sequence = []
         groups = np.random.choice(chunkIndices, size=self.countGroups, replace=False)
         for g in groups:
@@ -280,7 +273,7 @@ def train(
 
     if dataset_class == NSynthChunkedDataSet:
         chunkSize = ceil(int(memoryLimitInMB * 1024 * 1024 / NSynthRamLoadedDataSet.FrequencyBinsCount / 4) / windowsPerWav) * windowsPerWav
-        data_set = NSynthChunkedDataSet(root_dir = root_dir, chunkSize = chunkSize, windowStep = windowStep)
+        data_set = NSynthChunkedDataSet(root_dir = root_dir, chunkSize = chunkSize, windowStep = windowStep, device=device)
     else:
         data_set = dataset_class(root_dir = root_dir, windowStep = windowStep)
 
@@ -295,7 +288,6 @@ def train(
     validationWavRandomSampler = WavRandomSampler(chunkSize, validationChunkIndices, allChunkIndices[-1], lastChunkSize)
     
     # Data loader object to load wav files on demand
-    # And run STFT on the wave files to obtain the input features
     trainDataLoader = DataLoader(
         data_set,
         shuffle = False,
@@ -330,8 +322,7 @@ def train(
     optimizer = Adam(model.parameters(), lr = learning_rate)
     
     # Epoch loop
-    #for _ in tqdm.tqdm(range(1, epochs + 1)):
-    for epoch in range(1, epochs + 1):
+    for epoch in tqdm.tqdm(range(1, epochs + 1)):
         # Object to aggregate losses over the epoch
         trainLosses = AverageMeter()
         validationLosses = AverageMeter()
@@ -342,10 +333,6 @@ def train(
         for batch_idx, batch in enumerate(trainDataLoader):
             # Get the inputs from the dataset
             inputs, labels = batch
-
-            # Port them to device
-            inputs = inputs.to(device)
-            labels = labels.to(device)
 
             # Zero the parameter gradients 
             optimizer.zero_grad()
@@ -365,10 +352,6 @@ def train(
         for batch_idx, batch in enumerate(validationDataLoader):
             # Get the inputs from the dataset
             inputs, labels = batch
-
-            # Port them to device
-            inputs = inputs.to(device)
-            labels = labels.to(device)
 
             # forward
             outputs = model.forward(inputs)
