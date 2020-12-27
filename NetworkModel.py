@@ -6,7 +6,7 @@ from torch.nn import Conv1d, MaxPool1d, Softmax, Module, Linear
 from torch.utils.data import Dataset, BatchSampler, Sampler, DataLoader
 from torch.optim import SGD, Adam
 from torch.fft import fft
-
+import matplotlib.pyplot as plt
 # Signal processing imports
 from scipy.io import wavfile
 from scipy.signal import stft
@@ -25,6 +25,7 @@ from PlotterUtils import AverageMeter, VisdomLinePlotter
 class ModelBase(Module):
     InputShape = (2000, 1)
 
+# conv1d -> maxPooling1d (2) -> fc layer -> relu -> fc layer
 class Model1(ModelBase):
     ConvolutionKernelSize = 5
     ConvolutionPadding = 2
@@ -51,6 +52,31 @@ class Model1(ModelBase):
         x = torch.relu(self.fc1(x))
         x = self.fc2(x)
         return x
+
+# conv1d -> maxPooling1d (2) -> fc layer -> relu
+class Model2(ModelBase):
+    ConvolutionKernelSize = 5
+    ConvolutionPadding = 2
+    PoolingKernelSize = 2
+    InputToOutputRatio = 2
+    def __init__(self):
+        super(Model2, self).__init__()
+        self.conv1 = Conv1d(in_channels = ModelBase.InputShape[1], out_channels = ModelBase.InputShape[1], kernel_size = Model2.ConvolutionKernelSize, padding = Model2.ConvolutionPadding)
+        self.maxpool1 = MaxPool1d(Model2.PoolingKernelSize)
+        self.fcInputShape = (ModelBase.InputShape[0] // Model2.PoolingKernelSize,  Model2.InputShape[1])
+        self.fc1 = Linear(self.fcInputShape[0] *  self.fcInputShape[1], 
+                          self.fcInputShape[0] *  self.fcInputShape[1])
+        torch.nn.init.xavier_uniform_(self.conv1.weight)
+        torch.nn.init.xavier_uniform_(self.fc1.weight)
+
+    def forward(self, x):
+        x = fft(x,dim=2,norm='forward').abs()[:,:,0:ModelBase.InputShape[0]]
+        x = torch.relu(self.conv1(x))
+        x = self.maxpool1(x)
+        x = x.view(-1, self.fcInputShape[0] *  self.fcInputShape[1])
+        x = torch.relu(self.fc1(x))
+        return x
+
 
 def passthru(x): return x
 class NSynthDataSet(Dataset):
@@ -114,13 +140,6 @@ class NSynthDataSet(Dataset):
 class NSynthRamLoadedDataSet(Dataset):
     """NSynth Music Frequencies dataset - but all data loaded onto RAM at init"""
 
-    WavFileTime = 4.0
-    SamplingFrequency = 16000
-    WindowLength = (ModelBase.InputShape[0] - 1) * 2
-    FrequencyBinsCount = ModelBase.InputShape[0]
-    Sigma = 2.0 # sqrt(2)*sigma
-
-
     def __init__(self, root_dir, transform = passthru, filterString = '', model = Model1, windowStep = 4000, device = torch.device('cpu')):
         with open(os.path.join(root_dir, 'examples.json'), 'r') as f:
             self.labelMap = json.loads(f.read())
@@ -170,13 +189,6 @@ class NSynthRamLoadedDataSet(Dataset):
 
 class NSynthChunkedDataSet(Dataset):
     """NSynth Music Frequencies dataset - but data loaded onto RAM at demand in *chunks*"""
-
-    WavFileTime = 4.0
-    SamplingFrequency = 16000
-    WindowLength = (ModelBase.InputShape[0] - 1) * 2
-    FrequencyBinsCount = ModelBase.InputShape[0]
-    Sigma = 2.0 # sqrt(2)*sigma
-
 
     def __init__(self, root_dir, chunkSize, transform = passthru, filterString = '', model = Model1, windowStep = 4000, device = torch.device('cpu')):
         with open(os.path.join(root_dir, 'examples.json'), 'r') as f:
@@ -272,10 +284,10 @@ def train(
     windowsPerWav = int(NSynthDataSet.WavFileTime * NSynthDataSet.SamplingFrequency // windowStep)
 
     if dataset_class == NSynthChunkedDataSet:
-        chunkSize = ceil(int(memoryLimitInMB * 1024 * 1024 / NSynthRamLoadedDataSet.FrequencyBinsCount / 4) / windowsPerWav) * windowsPerWav
-        data_set = NSynthChunkedDataSet(root_dir = root_dir, chunkSize = chunkSize, windowStep = windowStep, device=device)
+        chunkSize = ceil(int(memoryLimitInMB * 1024 * 1024 / NSynthDataSet.FrequencyBinsCount / 4) / windowsPerWav) * windowsPerWav
+        data_set = NSynthChunkedDataSet(root_dir = root_dir, chunkSize = chunkSize, model = model_class, windowStep = windowStep, device=device)
     else:
-        data_set = dataset_class(root_dir = root_dir, windowStep = windowStep)
+        data_set = dataset_class(root_dir = root_dir, model = model_class,  windowStep = windowStep)
 
     # Initialize the sampler to split between train and validation sets
     allChunkIndices = list(range(0, ceil(len(data_set) / chunkSize)))
@@ -363,3 +375,76 @@ def train(
         print('Epoch', epoch, ' : validation DONE. ValidationLoss =', validationLosses.avg)
     
     torch.save(model.state_dict(), save_path)
+
+def test(
+    root_dir = 'assets\\nsynth_test', 
+    model_class = Model1, 
+    dataset_class = NSynthDataSet,
+    memoryLimitInMB = 1024,
+    device = torch.device('cpu'), 
+    load_path = 'model.pth', 
+    windowStep = 4000):
+
+    # Calculate chunk size based on the memory limit allowed
+    windowsPerWav = int(NSynthDataSet.WavFileTime * NSynthDataSet.SamplingFrequency // windowStep)
+
+    if dataset_class == NSynthChunkedDataSet:
+        chunkSize = ceil(int(memoryLimitInMB * 1024 * 1024 / NSynthDataSet.FrequencyBinsCount / 4) / windowsPerWav) * windowsPerWav
+        data_set = NSynthChunkedDataSet(root_dir = root_dir, chunkSize = chunkSize, model = model_class, windowStep = windowStep, device=device)
+    else:
+        data_set = dataset_class(root_dir = root_dir, model = model_class, windowStep = windowStep)
+
+    # Initialize the sampler to split between train and validation sets
+    allChunkIndices = list(range(0, ceil(len(data_set) / chunkSize)))
+    lastChunkSize = len(data_set) % chunkSize
+    if (lastChunkSize == 0) : lastChunkSize = chunkSize
+
+    testWavRandomSampler = WavRandomSampler(chunkSize, allChunkIndices, allChunkIndices[-1], lastChunkSize)
+    
+    testDataLoader = DataLoader(
+        data_set,
+        shuffle = False,
+        num_workers = 0,
+        batch_size = None, # Specially needed - else the auto_collation makes batch sampling useless!
+        sampler = BatchSampler(
+            testWavRandomSampler,
+            batch_size = 1,
+            drop_last = False
+        )
+    )
+
+    # Plotter object to plot the losses for each window
+    plotter = VisdomLinePlotter(env_name='Accuracy plot')
+
+    # Port the model to device
+    model = model_class()
+    model.load_state_dict(torch.load(load_path))
+    model = model.to(device)
+
+    model.eval()
+    frequencyBinRange = torch.from_numpy((NSynthDataSet.SamplingFrequency/2.0/data_set.outputBinsCount) *  np.array(range(data_set.outputBinsCount))).to(device)
+    for batch_idx, batch in enumerate(testDataLoader):
+        # Get the inputs from the dataset
+        inputs, labels = batch
+
+        # forward
+        outputs = model.forward(inputs)
+
+        #outputs = outputs.detach().cpu().numpy()
+        #expected = labels.detach().cpu().numpy()
+
+        #print(outputs,expected)
+        #plt.plot(outputs[0,:])
+        #plt.plot(expected[0,:])
+        #plt.show()
+        #return 0
+
+        frequencyWeightedSum = torch.sum((outputs * frequencyBinRange),axis=1)
+        outputSum = torch.sum(outputs, axis=1)
+        observed = (frequencyWeightedSum/outputSum).detach().cpu().numpy()[0]
+        plotter.plot('Hz', 'Observed', 'Frequencies', batch_idx, observed)
+
+        expectedFrequencyWeightedSum = torch.sum((labels * frequencyBinRange),axis=1)
+        expectedSum = torch.sum(labels, axis=1)
+        expected = (expectedFrequencyWeightedSum/expectedSum).detach().cpu().numpy()[0]
+        plotter.plot('Hz', 'Expected', 'Frequencies', batch_idx, expected)
