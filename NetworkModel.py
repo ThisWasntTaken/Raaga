@@ -86,7 +86,7 @@ class NSynthDataSet(Dataset):
     SamplingFrequency = 16000
     WindowLength = (ModelBase.InputShape[0] - 1) * 2
     FrequencyBinsCount = ModelBase.InputShape[0]
-    Sigma = 2.0 # sqrt(2)*sigma
+    Sigma = 64.0 # sqrt(2)*sigma
 
 
     def __init__(self, root_dir, transform = passthru, filterString = '', model = Model1, windowStep = 4000):
@@ -426,14 +426,17 @@ def test(
     for batch_idx, batch in enumerate(testDataLoader):
         # Get the inputs from the dataset
         inputs, labels = batch
+        #fftInputs = fft(inputs ,dim=2,norm='forward').abs()[:,:,0:ModelBase.InputShape[0]]
 
         # forward
         outputs = model.forward(inputs)
 
+        #fftInputs = fftInputs.detach().cpu().numpy()
         #outputs = outputs.detach().cpu().numpy()
         #expected = labels.detach().cpu().numpy()
 
         #print(outputs,expected)
+        #plt.plot(fftInputs[0, 0,:])
         #plt.plot(outputs[0,:])
         #plt.plot(expected[0,:])
         #plt.show()
