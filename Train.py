@@ -42,6 +42,8 @@ def main():
 
     if options.modelType == 'Model1':
         modelClass = NetworkModel.Model1
+    elif options.modelType == 'Model2':
+        modelClass = NetworkModel.Model2
 
     if options.loadDataToRam:
         datasetClass = NetworkModel.NSynthRamLoadedDataSet
