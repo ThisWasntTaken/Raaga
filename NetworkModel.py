@@ -77,6 +77,49 @@ class Model2(ModelBase):
         x = torch.relu(self.fc1(x))
         return x
 
+class Model4(ModelBase):
+    ConvolutionKernelSize = 5
+    ConvolutionPadding = 2
+    PoolingKernelSize = 2
+    InputToOutputRatio = 2
+    def __init__(self):
+        super(Model4, self).__init__()
+        self.conv1 = Conv1d(in_channels = ModelBase.InputShape[1], out_channels = ModelBase.InputShape[1], kernel_size = Model4.ConvolutionKernelSize, padding = Model4.ConvolutionPadding)
+        self.maxpool1 = MaxPool1d(Model4.PoolingKernelSize)
+        self.fcInputShape = (ModelBase.InputShape[0] // Model4.PoolingKernelSize,  Model4.InputShape[1])
+        self.fc1 = Linear(self.fcInputShape[0] *  self.fcInputShape[1], 
+                          self.fcInputShape[0] *  self.fcInputShape[1])
+        self.fc2 = Linear(self.fcInputShape[0] *  self.fcInputShape[1], 
+                          self.fcInputShape[0] *  self.fcInputShape[1])
+        torch.nn.init.xavier_uniform_(self.conv1.weight)
+        torch.nn.init.xavier_uniform_(self.fc1.weight)
+        torch.nn.init.xavier_uniform_(self.fc2.weight)
+
+    def forward(self, x):
+        x = fft(x,dim=2,norm='forward').abs()[:,:,0:ModelBase.InputShape[0]]
+        x = x / x.max()
+        x = torch.relu(self.conv1(x))
+        x = self.maxpool1(x)
+        x = x.view(-1, self.fcInputShape[0] *  self.fcInputShape[1])
+        x = torch.relu(self.fc1(x))
+        x = torch.relu(self.fc2(x))
+        return x
+
+    def forward_with_plt(self, x):
+        x = fft(x,dim=2,norm='forward').abs()[:,:,0:ModelBase.InputShape[0]]
+        x = x / x.max()
+
+        x1 = x.detach().cpu().numpy()
+        x = torch.relu(self.conv1(x))
+        x2 = x.detach().cpu().numpy()
+        x = self.maxpool1(x)
+        x3 = x.detach().cpu().numpy()
+        x = x.view(-1, self.fcInputShape[0] *  self.fcInputShape[1])
+        x = torch.relu(self.fc1(x))
+        x4 = x.detach().cpu().numpy()
+        x = torch.relu(self.fc2(x))
+        x5 = x.detach().cpu().numpy()
+        return x1, x2, x3, x4, x5
 
 def passthru(x): return x
 class NSynthDataSet(Dataset):
@@ -227,7 +270,7 @@ class NSynthChunkedDataSet(Dataset):
         labelIdx = idx // self.windowsPerWav
         wavIdx = labelIdx % self.wavFilePerChunk
         offset = (idx % self.windowsPerWav) * self.windowStep
-        return torch.stack([ self.inputs[j, :, i:i+NSynthDataSet.WindowLength] for i,j in zip(offset, wavIdx) ]), self.frequencyValues[labelIdx,:]
+        return torch.stack([ self.inputs[j, :, i:i+NSynthDataSet.WindowLength] for i,j in zip(offset, wavIdx) ]), self.frequencyValues[labelIdx,:], labelIdx
 
     def loadChunk(self, startIdx):
         chunkIdx = startIdx // self.chunkSize
@@ -344,7 +387,7 @@ def train(
         model.train(True)
         for batch_idx, batch in enumerate(trainDataLoader):
             # Get the inputs from the dataset
-            inputs, labels = batch
+            inputs, labels, labelIdx = batch
 
             # Zero the parameter gradients 
             optimizer.zero_grad()
@@ -363,7 +406,7 @@ def train(
         model.eval()
         for batch_idx, batch in enumerate(validationDataLoader):
             # Get the inputs from the dataset
-            inputs, labels = batch
+            inputs, labels, labelIdx = batch
 
             # forward
             outputs = model.forward(inputs)
@@ -382,7 +425,8 @@ def test(
     dataset_class = NSynthDataSet,
     memoryLimitInMB = 1024,
     device = torch.device('cpu'), 
-    load_path = 'model.pth', 
+    load_path = 'model.pth',
+    plotOnly = True,
     windowStep = 4000):
 
     # Calculate chunk size based on the memory limit allowed
@@ -425,29 +469,42 @@ def test(
     frequencyBinRange = torch.from_numpy((NSynthDataSet.SamplingFrequency/2.0/data_set.outputBinsCount) *  np.array(range(data_set.outputBinsCount))).to(device)
     for batch_idx, batch in enumerate(testDataLoader):
         # Get the inputs from the dataset
-        inputs, labels = batch
-        #fftInputs = fft(inputs ,dim=2,norm='forward').abs()[:,:,0:ModelBase.InputShape[0]]
+        inputs, labels, labelIdx = batch
+        fftInputs = fft(inputs ,dim=2,norm='forward').abs()[:,:,0:ModelBase.InputShape[0]]
+        fftInputs = fftInputs / fftInputs.max()
+
+        print ("Wav file =", data_set.labelVector[labelIdx])
 
         # forward
-        outputs = model.forward(inputs)
+        if plotOnly:
+            x1, x2, x3, x4, x5 = model.forward_with_plt(inputs)
+            #print ('x1[', x1.shape, '] =', x1, '\n',
+            #       'x2[', x2.shape, '] =', x2, '\n',
+            #       'x3[', x3.shape, '] =', x3, '\n',
+            #       'x4[', x4.shape, '] =', x4, '\n',
+            #       'x5[', x5.shape, '] =', x5, '\n')
 
-        #fftInputs = fftInputs.detach().cpu().numpy()
-        #outputs = outputs.detach().cpu().numpy()
-        #expected = labels.detach().cpu().numpy()
+            fftInputs = fftInputs.detach().cpu().numpy()
+            #outputs = outputs.detach().cpu().numpy()
+            outputs = None
+            expected = labels.detach().cpu().numpy()
 
-        #print(outputs,expected)
-        #plt.plot(fftInputs[0, 0,:])
-        #plt.plot(outputs[0,:])
-        #plt.plot(expected[0,:])
-        #plt.show()
-        #return 0
+            #print(outputs,expected)
+            fig, axs = plt.subplots(6)
+            axs[0].plot(expected[0,:], color='black')
+            axs[1].plot(x1[0,0,:], color='red')
+            axs[2].plot(x2[0,0,:], color='green')
+            axs[3].plot(x3[0,0,:], color='blue')
+            axs[4].plot(x4[0,:], color='magenta')
+            axs[5].plot(x5[0,:], color='yellow')
+            plt.show()
+        else:
+            frequencyWeightedSum = torch.sum((outputs * frequencyBinRange),axis=1)
+            outputSum = torch.sum(outputs, axis=1)
+            observed = (frequencyWeightedSum/outputSum).detach().cpu().numpy()[0]
+            plotter.plot('Hz', 'Observed', 'Frequencies', batch_idx, observed)
 
-        frequencyWeightedSum = torch.sum((outputs * frequencyBinRange),axis=1)
-        outputSum = torch.sum(outputs, axis=1)
-        observed = (frequencyWeightedSum/outputSum).detach().cpu().numpy()[0]
-        plotter.plot('Hz', 'Observed', 'Frequencies', batch_idx, observed)
-
-        expectedFrequencyWeightedSum = torch.sum((labels * frequencyBinRange),axis=1)
-        expectedSum = torch.sum(labels, axis=1)
-        expected = (expectedFrequencyWeightedSum/expectedSum).detach().cpu().numpy()[0]
-        plotter.plot('Hz', 'Expected', 'Frequencies', batch_idx, expected)
+            expectedFrequencyWeightedSum = torch.sum((labels * frequencyBinRange),axis=1)
+            expectedSum = torch.sum(labels, axis=1)
+            expected = (expectedFrequencyWeightedSum/expectedSum).detach().cpu().numpy()[0]
+            plotter.plot('Hz', 'Expected', 'Frequencies', batch_idx, expected)

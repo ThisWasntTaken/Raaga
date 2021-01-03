@@ -15,6 +15,7 @@ def main():
     parser.add_argument('-mt', dest='modelClass', type=str, help='Set the model class', default='Model1')
     parser.add_argument('-R', dest='loadDataToRam', action='store_true', help='Preload all data into ram to speedup training')
     parser.add_argument('-C', dest='chunkDataToRam', action='store_true', help='Load chunked data of size -M (in MB) into ram to speedup training')
+    parser.add_argument('-p', dest='plotOnly', action='store_true', help='Only plot all layer outputs - and not evaluate precision in testing. Good for debug')
     parser.add_argument('-M', dest='memoryLimit', type=int, help='Load chunked data of this size (in MB) into ram to speedup training', default='2048')
     parser.add_argument('-r', dest='learningRate', type=float, help='Set the learning rate', default='0.001')
     parser.add_argument('-v', dest='validationSplit', type=float, help='Set the validation split', default='0.1')
@@ -44,6 +45,8 @@ def main():
         modelClass = NetworkModel.Model1
     elif options.modelClass == 'Model2':
         modelClass = NetworkModel.Model2
+    elif options.modelClass == 'Model4':
+        modelClass = NetworkModel.Model4
 
     if options.loadDataToRam:
         datasetClass = NetworkModel.NSynthRamLoadedDataSet
@@ -58,6 +61,7 @@ def main():
         dataset_class = datasetClass,
         memoryLimitInMB = options.memoryLimit,
         device = device, 
+        plotOnly = options.plotOnly,
         load_path = options.modelPath,
         windowStep = options.windowStep
     )
